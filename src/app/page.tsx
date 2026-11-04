@@ -1,5 +1,7 @@
 import Link from "next/link";
-export default function Home() {
+import { hostedMode } from "@/lib/mode";
+export default async function Home() {
+  const hosted = await hostedMode();
   return (
     <main id="main" className="landing">
       <header className="public-header">
@@ -33,16 +35,17 @@ export default function Home() {
           </Link>
         </div>
         <div className="foundation-card">
-          <span className="badge">Local development</span>
+          {!hosted && <span className="badge">Local development</span>}
           <h2>Start with the essentials</h2>
           <p>
-            Workspaces, team roles, document search, and cited source excerpts
-            are available now, alongside versioned procedures and local draft
-            runs. Model integrations and approvals are planned for later
-            milestones.
+            Workspaces, team roles, document search with cited source excerpts,
+            versioned procedures, draft runs, and an approval inbox where a
+            person signs off every outgoing action.
           </p>
           <p className="hint">
-            Use fictional data here. No production services are connected.
+            {hosted
+              ? "Approved actions are recorded in your workspace outbox. Email, Slack and Drive delivery are planned."
+              : "Use fictional data here. No production services are connected."}
           </p>
         </div>
       </section>

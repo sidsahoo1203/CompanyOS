@@ -22,6 +22,13 @@ export function proxy(request: NextRequest) {
   const response = NextResponse.next({ request: { headers } });
   response.headers.set("Content-Security-Policy", csp);
   response.headers.set("Cache-Control", "private, no-store");
+  // Hosted deployments are HTTPS-only (see src/lib/env.ts). Read at request
+  // time so the header does not depend on the build environment.
+  if (process.env.APP_MODE === "production")
+    response.headers.set(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
   return response;
 }
 export const config = {

@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { zipSync, strToU8 } from "fflate";
 export function docx(
   text = "Client onboarding starts with a kickoff meeting.",
@@ -42,4 +43,43 @@ export function pdf(text = "Client onboarding starts with a kickoff meeting.") {
   output +=
     "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF";
   return Buffer.from(output);
+}
+// One-page PDF whose content stream is FlateDecode-compressed: `inflated`
+// bytes of spaces after a short text operator, so it decompresses to far more
+// than its file size.
+export function flatePdf(inflated: number) {
+  const stream = deflateSync(
+    Buffer.concat([
+      Buffer.from("BT /F1 12 Tf 50 700 Td (Expanded) Tj ET "),
+      Buffer.alloc(inflated, 0x20),
+    ]),
+  );
+  const parts: Buffer[] = [Buffer.from("%PDF-1.7\n")];
+  const offsets: number[] = [];
+  const size = () => parts.reduce((sum, part) => sum + part.length, 0);
+  const objects: (string | Buffer)[] = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    Buffer.concat([
+      Buffer.from(
+        "<< /Length " + stream.length + " /Filter /FlateDecode >>\nstream\n",
+      ),
+      stream,
+      Buffer.from("\nendstream"),
+    ]),
+  ];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(size());
+    parts.push(Buffer.from(index + 1 + " 0 obj\n"), Buffer.from(object));
+    parts.push(Buffer.from("\nendobj\n"));
+  }
+  const start = size();
+  let tail = "xref\n0 6\n0000000000 65535 f \n";
+  for (const offset of offsets)
+    tail += String(offset).padStart(10, "0") + " 00000 n \n";
+  tail += "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF";
+  parts.push(Buffer.from(tail));
+  return Buffer.concat(parts);
 }

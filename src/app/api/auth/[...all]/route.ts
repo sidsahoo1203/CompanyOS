@@ -1,5 +1,7 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { getAuth } from "@/lib/auth";
+import { clientIp } from "@/lib/client-ip";
+import { env } from "@/lib/env";
 import { noStore, body } from "@/lib/http";
 import { publicError } from "@/lib/errors";
 import { logUnexpected } from "@/lib/log";
@@ -8,8 +10,10 @@ export const runtime = "nodejs";
 async function handle(request: Request) {
   try {
     const headers = new Headers(request.headers);
-    // Local-only app: do not trust client-supplied forwarded IP headers.
-    headers.set("x-companyos-client-ip", "127.0.0.1");
+    headers.set(
+      "x-companyos-client-ip",
+      clientIp(request.headers, env().APP_MODE === "production"),
+    );
     const parsed =
       request.method === "POST"
         ? await body(request, z.record(z.string(), z.unknown()))

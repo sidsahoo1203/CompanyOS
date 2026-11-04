@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   betterAuth: vi.fn((options: Record<string, unknown>) => ({ options })),
   handler: vi.fn(),
+  mode: "local" as "local" | "production",
+  sendEmail: vi.fn(async () => {}),
 }));
 vi.mock("better-auth", () => ({ betterAuth: mocks.betterAuth }));
 vi.mock("better-auth/next-js", () => ({
@@ -9,11 +11,16 @@ vi.mock("better-auth/next-js", () => ({
 }));
 vi.mock("@/lib/env", () => ({
   env: () => ({
+    APP_MODE: mocks.mode,
     BETTER_AUTH_URL: "http://127.0.0.1:3000",
     BETTER_AUTH_SECRET: "s".repeat(32),
   }),
 }));
 vi.mock("@/lib/db", () => ({ authPool: () => "auth-pool" }));
+vi.mock("@/lib/email", async (original) => ({
+  ...(await original<typeof import("@/lib/email")>()),
+  sendEmail: mocks.sendEmail,
+}));
 import { getAuth } from "@/lib/auth";
 import { GET, POST } from "@/app/api/auth/[...all]/route";
 type Options = {
@@ -77,6 +84,68 @@ describe("authentication configuration", () => {
     expect(JSON.parse(error.mock.calls[0][0] as string).level).toBe("error");
   });
 });
+describe("email verification and password reset", () => {
+  type EmailOptions = {
+    emailAndPassword: {
+      requireEmailVerification: boolean;
+      revokeSessionsOnPasswordReset: boolean;
+      sendResetPassword: (data: {
+        user: { email: string; name: string };
+        url: string;
+      }) => Promise<void>;
+    };
+    emailVerification: { sendOnSignUp: boolean; sendOnSignIn: boolean };
+    advanced: Record<string, unknown>;
+  };
+  async function freshOptions(mode: "local" | "production") {
+    mocks.mode = mode;
+    vi.resetModules();
+    const { getAuth } = await import("@/lib/auth");
+    const result = (getAuth() as unknown as { options: EmailOptions }).options;
+    mocks.mode = "local";
+    return result;
+  }
+  it("local mode keeps instant sign-up and plain cookies", async () => {
+    const local = await freshOptions("local");
+    expect(local.emailAndPassword.requireEmailVerification).toBe(false);
+    expect(local.emailVerification).toMatchObject({
+      sendOnSignUp: false,
+      sendOnSignIn: false,
+    });
+    expect(local.advanced).toMatchObject({
+      useSecureCookies: false,
+      disableCSRFCheck: false,
+      disableOriginCheck: false,
+    });
+  });
+  it("production requires a verified email and secure cookies", async () => {
+    const hosted = await freshOptions("production");
+    expect(hosted.emailAndPassword).toMatchObject({
+      requireEmailVerification: true,
+      revokeSessionsOnPasswordReset: true,
+    });
+    expect(hosted.emailVerification).toMatchObject({
+      sendOnSignUp: true,
+      sendOnSignIn: true,
+    });
+    expect(hosted.advanced).toMatchObject({ useSecureCookies: true });
+  });
+  it("sends the reset link to the account's address, escaping the name", async () => {
+    const hosted = await freshOptions("production");
+    await hosted.emailAndPassword.sendResetPassword({
+      user: { email: "riya@agency.example", name: "<b>Riya</b>" },
+      url: "https://app.example/api/auth/reset-password/abc?callbackURL=%2Freset-password",
+    });
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "riya@agency.example",
+        subject: "Reset your CompanyOS password",
+        text: expect.stringContaining("/api/auth/reset-password/abc"),
+        html: expect.stringContaining("&lt;b&gt;Riya&lt;/b&gt;"),
+      }),
+    );
+  });
+});
 describe("auth route wrapper", () => {
   const post = (body: string, headers: Record<string, string> = {}) =>
     new Request("http://127.0.0.1:3000/api/auth/sign-in/email", {
@@ -94,6 +163,27 @@ describe("auth route wrapper", () => {
     const forwarded: Request = mocks.handler.mock.calls[0][0];
     expect(forwarded.headers.get("x-companyos-client-ip")).toBe("127.0.0.1");
     expect(await forwarded.json()).toEqual({ email: "a@b.example" });
+  });
+  it("in production keys rate limits on the first forwarded address only", async () => {
+    mocks.mode = "production";
+    try {
+      mocks.handler.mockResolvedValue(new Response("{}"));
+      await POST(
+        post("{}", {
+          "x-forwarded-for": "198.51.100.7, 10.0.0.1",
+          "x-companyos-client-ip": "203.0.113.9",
+        }),
+      );
+      await POST(post("{}", { "x-forwarded-for": "not-an-ip" }));
+      await POST(post("{}"));
+      expect(
+        mocks.handler.mock.calls.map((call) =>
+          (call[0] as Request).headers.get("x-companyos-client-ip"),
+        ),
+      ).toEqual(["198.51.100.7", "0.0.0.0", "0.0.0.0"]);
+    } finally {
+      mocks.mode = "local";
+    }
   });
   it("forces password changes to revoke other sessions", async () => {
     mocks.handler.mockResolvedValue(new Response("{}"));

@@ -1,9 +1,11 @@
 import Link from "next/link";
-export default function AuthLayout({
+import { hostedMode } from "@/lib/mode";
+export default async function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const hosted = await hostedMode();
   return (
     <div className="auth-layout">
       <aside className="auth-aside">
@@ -26,7 +28,9 @@ export default function AuthLayout({
             Your team in control.
           </p>
         </div>
-        <p className="hint">Local development · Use fictional data</p>
+        {!hosted && (
+          <p className="hint">Local development · Use fictional data</p>
+        )}
       </aside>
       <main id="main" className="auth-main">
         <div className="auth-card">{children}</div>

@@ -9,6 +9,8 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
+    "start:render": "node scripts/render-start.mjs",
+    "db:setup-roles": "node scripts/db-setup-roles.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

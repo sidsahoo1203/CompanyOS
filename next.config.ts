@@ -4,8 +4,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["pg"],
   // Pin the tracing root to this project; otherwise Next infers it from an
-  // unrelated lockfile in a parent directory. The document parser worker and
-  // its libraries are bundled by Turbopack into .next/server/chunks.
+  // unrelated lockfile in a parent directory. The document parser runs from
+  // scripts/parse-document.mjs in its own process, using installed node_modules.
   outputFileTracingRoot: path.resolve(process.cwd()),
   async headers() {
     return [

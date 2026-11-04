@@ -1,0 +1,40 @@
+# Render Blueprint: one web service (the whole Next.js app) plus PostgreSQL.
+# See docs/deployment-render.md before using it.
+services:
+  - type: web
+    name: companyos
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: npm ci && npm run build
+    # Sets up database roles, applies migrations, then starts the app.
+    startCommand: npm run start:render
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: APP_MODE
+        value: production
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: APP_DB_PASSWORD
+        generateValue: true
+      - key: AUTH_DB_PASSWORD
+        generateValue: true
+      - key: MIGRATION_DATABASE_URL
+        fromDatabase:
+          name: companyos-db
+          property: connectionString
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: UPLOAD_REQUIRE_ANTIVIRUS
+        value: "false"
+databases:
+  - name: companyos-db
+    region: singapore
+    databaseName: companyos
+    user: companyos_owner

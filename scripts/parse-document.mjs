@@ -143,14 +143,9 @@ export async function parseDocument(bytes, extension) {
   if (chunks.length > 500) fault("text_limit");
   return chunks;
 }
-if (parentPort) {
+async function respond(bytes, extension) {
   try {
-    parentPort.postMessage({
-      chunks: await parseDocument(
-        new Uint8Array(workerData.bytes),
-        workerData.extension,
-      ),
-    });
+    return { chunks: await parseDocument(new Uint8Array(bytes), extension) };
   } catch (error) {
     const allowed = [
       "active_content",
@@ -159,8 +154,50 @@ if (parentPort) {
       "archive_limit",
       "no_text",
     ];
-    parentPort.postMessage({
+    return {
       error: allowed.includes(error.code) ? error.code : "invalid_format",
-    });
+    };
   }
+}
+// Total bytes pdf.js may inflate from compressed streams in one document.
+const MAX_INFLATED = 64 * 1024 * 1024;
+// pdf.js inflates FlateDecode streams through DecompressionStream without an
+// output limit, and ArrayBuffer memory is outside V8 heap limits. In the
+// parser process, count inflated output and stop the whole process at the
+// cap: failing the stream instead would make pdf.js retry with its unbounded
+// synchronous decoder.
+function capDecompression(stop) {
+  const Native = globalThis.DecompressionStream;
+  if (!Native) return;
+  let total = 0;
+  globalThis.DecompressionStream = class {
+    constructor(format) {
+      const inner = new Native(format);
+      this.writable = inner.writable;
+      this.readable = inner.readable.pipeThrough(
+        new TransformStream({
+          transform(chunk, controller) {
+            total += chunk.byteLength;
+            if (total > MAX_INFLATED) stop();
+            else controller.enqueue(chunk);
+          },
+        }),
+      );
+    }
+  };
+}
+if (parentPort) {
+  parentPort.postMessage(await respond(workerData.bytes, workerData.extension));
+} else if (process.send && process.argv.includes("--companyos-parser")) {
+  // Child-process mode (see src/lib/document-processing.ts).
+  let replied = false;
+  const reply = (message) => {
+    if (replied) return;
+    replied = true;
+    process.send(message, () => process.exit(0));
+  };
+  capDecompression(() => reply({ error: "expansion_limit" }));
+  process.once("message", async ({ bytes, extension }) =>
+    reply(await respond(bytes, extension)),
+  );
 }

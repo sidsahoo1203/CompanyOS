@@ -9,7 +9,7 @@ import {
 } from "@/lib/knowledge-validation";
 import { processBytes, parseInWorker } from "@/lib/document-processing";
 import { readUpload } from "@/lib/upload-body";
-import { pdf, docx } from "../fixtures/documents";
+import { pdf, docx, flatePdf } from "../fixtures/documents";
 afterEach(() => vi.unstubAllEnvs());
 describe("untrusted file boundaries", () => {
   it.each([
@@ -202,6 +202,24 @@ describe("real bounded document processing", () => {
       ).status,
     ).toBe("ready");
   });
+  it("parses a normal compressed PDF in the separate parser process", async () => {
+    const result = await processBytes(flatePdf(100_000), "pdf");
+    expect(result.status).toBe("ready");
+    expect(result.chunks[0].content).toContain("Expanded");
+  });
+  it("stops a PDF whose streams inflate past the cap, outside this process", async () => {
+    const bomb = flatePdf(80 * 1024 * 1024);
+    expect(bomb.length).toBeLessThan(200 * 1024);
+    const before = process.memoryUsage().arrayBuffers;
+    const result = await processBytes(bomb, "pdf");
+    expect(result).toMatchObject({
+      status: "failed",
+      error: "expansion_limit",
+    });
+    expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(
+      32 * 1024 * 1024,
+    );
+  }, 30000);
   it("terminates processing at its deadline", async () => {
     await expect(parseInWorker(pdf(), "pdf", 1)).rejects.toThrow("timeout");
   });

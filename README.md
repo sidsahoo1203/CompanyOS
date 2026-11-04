@@ -6,7 +6,9 @@ membership, expiring invitations, roles, a responsive dashboard, and a private
 knowledge library with permission-aware search and source citations, versioned
 procedures, pinned skills, auditable draft runs, and an approval inbox whose
 approved actions are recorded in a local outbox only.
-It is not the complete SaaS and is not cleared for public deployment.
+It runs locally (`APP_MODE=local`) or hosted on Render (`APP_MODE=production`,
+with verified sign-up and password reset by email); see
+[docs/deployment-render.md](docs/deployment-render.md).
 
 ## Start locally
 
@@ -27,8 +29,10 @@ Sign up normally, or use `founder@studio.example` after seeding. The local seed
 password is the value of `SEED_PASSWORD` in your ignored `.env.local` file.
 Other synthetic accounts: `admin@studio.example`, `member@studio.example`,
 `founder@other.example`. Seed is repeatable and never resets existing passwords.
-No email is delivered. Invitation links must be shared manually; the recipient
-signs in first and then opens the link with the matching email account.
+Local mode delivers no email: password-reset links are printed in the
+`npm run dev` terminal as `email.local_preview` lines. Invitation links are
+always shared manually; the recipient signs in first and then opens the link
+with the matching email account.
 
 Stop the web server and database helper with Ctrl+C in their terminals.
 Data persists under ignored `work/postgres/`. There is no destructive reset script.
@@ -124,9 +128,10 @@ server access logs and referrers. A replacement invitation invalidates its prede
 Writes require same-origin requests, bounded payloads and schema validation.
 Metadata uses JSON; uploads use a bounded raw byte stream.
 Auth requests have database-backed rate limits. Local mode aggregates auth
-limits for loopback instead of trusting user-supplied proxy headers.
-Security headers include nonce-based script CSP, frame denial, and no-referrer.
-Production proxy/IP behavior must be designed before deployment.
+limits for loopback instead of trusting user-supplied proxy headers; production
+uses the first `X-Forwarded-For` entry set by Render's proxy (`src/lib/client-ip.ts`).
+Security headers include nonce-based script CSP, frame denial, and no-referrer,
+plus HSTS in production.
 Minimal append-only security events cover successful workspace and membership
 changes, not a complete audit UI or login/failure history. Records show each
 person as "Name (email)": display names are user-editable, emails are not.
@@ -140,26 +145,32 @@ Expected refusals (4xx) are not logged. There is no log shipping or alerting yet
 
 ## Production release gates
 
-No services have been provisioned or connected. There is no deployment workflow.
-Configuration rejects non-loopback services and unknown app modes. Production
-builds can run locally; public hosting is intentionally blocked by configuration.
+Hosted deployment targets Render (`render.yaml`, `npm run start:render`); follow
+[docs/deployment-render.md](docs/deployment-render.md). `APP_MODE=production`
+requires an HTTPS public origin, Resend email settings, and the restricted
+database roles, which the start script creates before applying migrations.
+Configuration still rejects unknown app modes, and local mode still rejects
+non-loopback services.
 
-Before public release:
+Done for hosting: verified email ownership on sign-up, password reset by email,
+secure cookies, HSTS, proxy-aware auth rate limits, managed-database role setup
+and migrations, and document parsing in a separate memory-capped process.
 
-- Implement and verify email ownership and account recovery; current local
-  accounts do not establish ownership of an email address.
-- Obtain explicit provider/budget/deployment approval, configure TLS and trusted
-  proxy headers, and review distributed abuse limits and account quotas.
-- Move secrets to a managed secret store, validate least-privilege managed
-  database roles, pooling and migrations, and test backup restoration.
-- Complete privacy/export/deletion, retention enforcement, monitoring,
-  login/error audit coverage, and accessibility/security review.
+Before inviting paying customers:
+
+- Use a paid database plan with backups and test a restore.
+- Decide run/approval quotas (today: 1,000 runs and 2,000 approval requests
+  per workspace lifetime, never reset).
+- Complete privacy/export/deletion, retention enforcement, monitoring and log
+  shipping, login/error audit coverage, and an accessibility/security review.
+- Connect a real antivirus scanner for uploads.
 - Implement remaining milestones and their full acceptance tests.
 - Keep data retention labeled as a saved preference until enforcement exists.
 
-Milestone 4 has no generative model calls, integration, outbound email,
-billing, financial transaction, or external side-effect capability. Approved
-actions are recorded only in the local outbox.
+Milestone 4 has no generative model calls, integration, billing, financial
+transaction, or external side-effect capability. The only outbound email is
+account verification and password reset in production. Approved actions are
+recorded only in the workspace outbox.
 
 ## Knowledge library (Milestone 2)
 
@@ -175,7 +186,8 @@ The same source/filename creates an immutable new version. Search uses only the
 latest version; a pending/failed replacement suppresses the older version.
 Old citation links still resolve to the original text, subject to current access.
 
-Processing runs in a bounded Node worker, without inherited environment secrets.
+Processing runs in a separate Node process (`scripts/parse-document.mjs`)
+without inherited environment secrets, at most two at once per server.
 Status persists as queued, processing, ready, failed, or quarantined. If the
 browser closes before processing starts, use Process / retry. An interrupted
 processing lease expires after 30 seconds; retry then. No background daemon is
@@ -191,7 +203,8 @@ credentials are required and no document is sent to an external service.
 
 Limits: 50 sources, 100 document versions, 50 MiB raw storage per workspace;
 100 PDF pages, 200,000 extracted characters, 500 chunks per document; DOCX
-archives bounded to 500 entries/20 MiB expanded. Uploads allow 20/minute and
+archives bounded to 500 entries/20 MiB expanded; PDF compressed streams bounded
+to 64 MiB inflated per document. Uploads allow 20/minute and
 search/answer requests 60/minute per actor/workspace/operation. Three active
 processing leases per workspace; parser deadline 15 seconds.
 
@@ -200,10 +213,9 @@ suspected prompt-injection text. This is not antivirus or complete prompt-inject
 detection. Safety does not depend on detecting every instruction: text is rendered
 inertly, no model/tools execute it, and permissions are checked in server/SQL code.
 Set UPLOAD_REQUIRE_ANTIVIRUS=true to fail closed when no real scanner is configured.
-A tested scanner adapter, OS-isolated processing with network denial, deployment
-packaging of the parser/dependencies, distributed resource limits, managed storage/
-backup/retention, and all earlier release gates remain required before public use.
-Worker threads have time/V8-heap limits but are not an OS security sandbox.
+The parser process has time and V8-heap limits, and a memory blow-up ends only
+that process, but it is not an OS security sandbox with network denial. A tested
+scanner adapter and managed storage/backup/retention remain open items.
 
 See docs/milestone-2-plan.md for decisions and docs/milestone-2-verification.md
 for actual verification evidence.

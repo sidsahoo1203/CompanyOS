@@ -3,33 +3,69 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { requestJson } from "@/lib/client";
-export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
+export function AuthForm({
+  mode,
+  verifyEmail = false,
+}: {
+  mode: "sign-in" | "sign-up";
+  verifyEmail?: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [sentTo, setSentTo] = useState("");
   const signup = mode === "sign-up";
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
     const data = new FormData(event.currentTarget);
+    const email = String(data.get("email")).trim().toLowerCase();
     try {
       await requestJson(
         "/api/auth/" + (signup ? "sign-up" : "sign-in") + "/email",
         "POST",
         {
-          email: String(data.get("email")).trim().toLowerCase(),
+          email,
           password: data.get("password"),
           ...(signup ? { name: String(data.get("name")).trim() } : {}),
+          // Where the emailed verification link lands after it succeeds.
+          ...(verifyEmail ? { callbackURL: "/onboarding" } : {}),
         },
       );
+      if (signup && verifyEmail) {
+        setSentTo(email);
+        setBusy(false);
+        return;
+      }
       router.push("/onboarding");
       router.refresh();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Please try again.");
+      const message =
+        error instanceof Error ? error.message : "Please try again.";
+      setError(
+        /not verified/i.test(message)
+          ? "Verify your email first. We have sent a new verification link; check your inbox and spam folder."
+          : message,
+      );
       setBusy(false);
     }
   }
+  // The same confirmation is shown whether or not the address already has an
+  // account, so sign-up does not reveal who is registered.
+  if (sentTo)
+    return (
+      <div className="stack" role="status">
+        <p className="notice">
+          Check your inbox at {sentTo}. Open the link we sent to finish creating
+          your account. It expires in 24 hours.
+        </p>
+        <p className="hint">
+          Nothing arrived? Check spam, then <Link href="/sign-in">sign in</Link>{" "}
+          to receive a new link.
+        </p>
+      </div>
+    );
   return (
     <form onSubmit={submit} className="stack">
       {signup && (
@@ -80,6 +116,11 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
       <button className="button" disabled={busy}>
         {busy ? "Please wait…" : signup ? "Create account" : "Sign in"}
       </button>
+      {!signup && (
+        <p className="hint">
+          <Link href="/forgot-password">Forgot password?</Link>
+        </p>
+      )}
       <p className="hint">
         {signup ? "Already have an account?" : "New to CompanyOS?"}{" "}
         <Link href={signup ? "/sign-in" : "/sign-up"}>

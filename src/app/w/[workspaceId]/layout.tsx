@@ -49,7 +49,9 @@ export default async function WorkspaceLayout({
       <div className="app-body">
         <header className="topbar">
           <span>{workspace.industry}</span>
-          <span className="badge">Local development</span>
+          {process.env.APP_MODE !== "production" && (
+            <span className="badge">Local development</span>
+          )}
         </header>
         <main id="main" className="workspace-main">
           {children}
