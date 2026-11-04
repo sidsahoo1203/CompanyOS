@@ -22,21 +22,41 @@ try {
   const database = (await client.query("SELECT current_database() AS name"))
     .rows[0].name;
   for (const [role, password] of Object.entries(passwords)) {
-    const exists = (
-      await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [role])
-    ).rowCount;
-    // Role names are fixed above; the password is quoted by the driver.
-    const attributes =
-      "LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD " +
-      client.escapeLiteral(password);
-    try {
+    const existing = (
       await client.query(
-        (exists ? 'ALTER ROLE "' : 'CREATE ROLE "') + role + '" ' + attributes,
+        "SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole AS privileged FROM pg_roles WHERE rolname = $1",
+        [role],
+      )
+    ).rows[0];
+    // A managed database owner is not a superuser: it may set these
+    // attributes when creating a role, but ALTER ROLE may only change the
+    // password. Existing roles are instead checked to be unprivileged.
+    if (existing?.privileged)
+      throw new Error(
+        "Role " +
+          role +
+          " has elevated privileges. Remove them (NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE) before deploying.",
       );
+    // Role names are fixed above; the password is quoted by the driver.
+    const statement = existing
+      ? 'ALTER ROLE "' +
+        role +
+        '" WITH LOGIN PASSWORD ' +
+        client.escapeLiteral(password)
+      : 'CREATE ROLE "' +
+        role +
+        '" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD ' +
+        client.escapeLiteral(password);
+    try {
+      await client.query(statement);
     } catch (error) {
       if (error.code === "42501")
         throw new Error(
-          "The database owner may not create roles. Create the roles companyos_app and companyos_auth with your provider's tools, then deploy again.",
+          "The database owner may not " +
+            (existing ? "update" : "create") +
+            " role " +
+            role +
+            ". Create or update companyos_app and companyos_auth with your provider's tools, then deploy again.",
         );
       throw error;
     }
@@ -47,7 +67,7 @@ try {
         role +
         '"',
     );
-    console.log((exists ? "Updated role " : "Created role ") + role);
+    console.log((existing ? "Updated role " : "Created role ") + role);
   }
 } finally {
   await client.end();
